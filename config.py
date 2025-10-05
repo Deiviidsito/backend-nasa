@@ -24,6 +24,10 @@ class Settings:
         for origin in os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",")
     ]
     
+    # OpenAQ API Configuration
+    OPENAQ_API_URL: str = os.getenv("OPENAQ_API_URL", "https://api.openaq.org/v3")
+    OPENAQ_API_KEY: str = os.getenv("OPENAQ_API_KEY", "")
+    
     # Data Storage
     DATA_PATH: Path = Path(os.getenv("DATA_PATH", "./data"))
     ZARR_STORE_PATH: Path = Path(os.getenv("ZARR_STORE_PATH", "./data/zarr_store"))

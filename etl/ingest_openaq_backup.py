@@ -1,5 +1,5 @@
 """
-Descarga las mediciones más recientes de PM2.5, NO2 y O3 en Los Ángeles desde OpenAQ v3.
+Descarga las mediciones más recientes de PM2.5, NO2 y O3 en Los Ángeles desde OpenAQ.
 """
 import requests
 import pandas as pd
@@ -45,20 +45,15 @@ def fetch_latest_openaq(
         headers = OPENAQ_CONFIG.get("headers", {})
         
         # Paso 1: Obtener ubicaciones en el área de Los Ángeles
-        # Usar coordenadas del centro de LA y radio en lugar de bbox
-        la_center_lat = (bbox[1] + bbox[3]) / 2  # (south + north) / 2
-        la_center_lon = (bbox[0] + bbox[2]) / 2  # (west + east) / 2
-        radius = 25000  # 25km - máximo permitido
-        
         locations_url = OPENAQ_CONFIG["api_url"]
         locations_params = {
-            "coordinates": f"{la_center_lat},{la_center_lon}",
-            "radius": radius,
-            "limit": 100
+            "bbox": bbox_str,
+            "limit": 1000,
+            "sort": "desc",
+            "order_by": "lastUpdated"
         }
         
         log_info(f"1️⃣ Obteniendo ubicaciones: {locations_url}")
-        log_info(f"🎯 Centro LA: {la_center_lat:.4f},{la_center_lon:.4f}, radio: {radius}m")
         log_info(f"Headers disponibles: {list(headers.keys())}")
         
         locations_response = requests.get(locations_url, params=locations_params, headers=headers, timeout=30)
@@ -102,40 +97,26 @@ def fetch_latest_openaq(
                 if "results" not in measurements_data:
                     continue
                 
-                # Obtener información de sensores de la ubicación
-                sensors_info = {sensor["id"]: sensor for sensor in location.get("sensors", [])}
-                
                 # Procesar mediciones de esta ubicación
                 for measurement in measurements_data["results"]:
-                    sensor_id = measurement.get("sensorsId")
-                    
-                    # Obtener información del parámetro desde el sensor
-                    if sensor_id not in sensors_info:
-                        continue
-                    
-                    sensor = sensors_info[sensor_id]
-                    param_info = sensor.get("parameter", {})
-                    param_name = param_info.get("name", "").lower()
+                    param = measurement.get("parameter", {}).get("name", "").lower()
                     
                     # Filtrar por parámetros de interés
-                    if param_name not in parameters:
+                    if param not in parameters:
                         continue
                     
                     # Extraer datos de la medición
-                    datetime_info = measurement.get("datetime", {})
                     row = {
-                        "timestamp": datetime_info.get("utc") if isinstance(datetime_info, dict) else datetime_info,
+                        "timestamp": measurement.get("datetime"),
                         "location_id": location_id,
                         "location_name": location_name,
-                        "parameter": param_name,
+                        "parameter": param,
                         "value": measurement.get("value"),
-                        "unit": param_info.get("units", ""),
+                        "unit": measurement.get("parameter", {}).get("units", ""),
                         "latitude": location.get("coordinates", {}).get("latitude"),
                         "longitude": location.get("coordinates", {}).get("longitude"),
                         "country": location.get("country", {}).get("name", ""),
-                        "city": location.get("city", ""),
-                        "sensor_id": sensor_id,
-                        "sensor_name": sensor.get("name", "")
+                        "city": location.get("city", "")
                     }
                     
                     all_measurements.append(row)
@@ -169,12 +150,75 @@ def fetch_latest_openaq(
         log_info(f"📊 Resumen por parámetro:\n{summary}")
         
         return str(output_path)
+                    
+                    value = measurement.get("value")
+                    unit = measurement.get("unit")
+                    last_updated = measurement.get("lastUpdated")
+                    
+                    if value is None:
+                        continue
+                    
+                    rows.append({
+                        "station_id": station_id,
+                        "station_name": station_name,
+                        "lat": lat,
+                        "lon": lon,
+                        "parameter": param,
+                        "value": float(value),
+                        "unit": unit,
+                        "lastUpdated": last_updated,
+                        "country": location_info.get("country", ""),
+                        "city": location_info.get("city", ""),
+                        "isMobile": location_info.get("isMobile", False),
+                        "isAnalysis": location_info.get("isAnalysis", False)
+                    })
+                    
+            except Exception as e:
+                log_error(f"Error procesando registro OpenAQ: {e}")
+                continue
+        
+        if not rows:
+            log_error("No se pudieron procesar datos válidos de OpenAQ")
+            return None
+        
+        # Crear DataFrame
+        df = pd.DataFrame(rows)
+        
+        # Limpiar y validar datos
+        df = df.dropna(subset=["value", "lat", "lon"])
+        df = df[df["value"] >= 0]  # Eliminar valores negativos
+        
+        # Agregar metadatos
+        df["download_timestamp"] = pd.Timestamp.now()
+        df["bbox_used"] = bbox_str
+        
+        # Estadísticas por parámetro
+        param_stats = df.groupby("parameter").agg({
+            "value": ["count", "mean", "min", "max"],
+            "station_id": "nunique"
+        }).round(2)
+        
+        log_info("Estadísticas por parámetro:")
+        for param in param_stats.index:
+            stats = param_stats.loc[param]
+            log_info(f"  {param}: {stats[('value', 'count')]} mediciones, "
+                    f"{stats[('station_id', 'nunique')]} estaciones, "
+                    f"promedio: {stats[('value', 'mean')]}")
+        
+        # Guardar como Parquet
+        output_path = DATA_DIR / OPENAQ_CONFIG["output_path"]
+        df.to_parquet(output_path, index=False)
+        
+        log_success(f"OpenAQ guardado en {output_path}")
+        log_info(f"Total registros: {len(df)}, estaciones únicas: {df['station_id'].nunique()}")
+        
+        return str(output_path)
         
     except requests.RequestException as e:
-        log_error(f"Error de conexión con OpenAQ: {e}")
+        log_error(f"Error de conexión con OpenAQ API: {e}")
         return None
     except Exception as e:
-        log_error(f"Error inesperado: {e}")
+        log_error(f"Error procesando datos OpenAQ: {e}")
         return None
 
 def validate_openaq_data(parquet_path: str) -> bool:
@@ -183,7 +227,7 @@ def validate_openaq_data(parquet_path: str) -> bool:
         df = pd.read_parquet(parquet_path)
         
         # Verificar columnas esenciales
-        required_cols = ["location_id", "latitude", "longitude", "parameter", "value"]
+        required_cols = ["station_id", "lat", "lon", "parameter", "value"]
         missing_cols = [col for col in required_cols if col not in df.columns]
         
         if missing_cols:
@@ -198,8 +242,8 @@ def validate_openaq_data(parquet_path: str) -> bool:
         # Verificar coordenadas válidas para LA
         west, south, east, north = BBOX_LA
         valid_coords = (
-            (df["latitude"] >= south) & (df["latitude"] <= north) &
-            (df["longitude"] >= west) & (df["longitude"] <= east)
+            (df["lat"] >= south) & (df["lat"] <= north) &
+            (df["lon"] >= west) & (df["lon"] <= east)
         )
         
         if not valid_coords.all():
@@ -227,17 +271,17 @@ def get_openaq_summary(parquet_path: str) -> Dict[str, Any]:
         
         summary = {
             "total_records": len(df),
-            "unique_locations": df["location_id"].nunique(),
+            "unique_stations": df["station_id"].nunique(),
             "parameters": list(df["parameter"].unique()),
             "date_range": {
-                "min": df["timestamp"].min() if "timestamp" in df else None,
-                "max": df["timestamp"].max() if "timestamp" in df else None
+                "min": df["lastUpdated"].min() if "lastUpdated" in df else None,
+                "max": df["lastUpdated"].max() if "lastUpdated" in df else None
             },
             "bbox_coverage": {
-                "lat_min": df["latitude"].min(),
-                "lat_max": df["latitude"].max(),
-                "lon_min": df["longitude"].min(),
-                "lon_max": df["longitude"].max()
+                "lat_min": df["lat"].min(),
+                "lat_max": df["lat"].max(),
+                "lon_min": df["lon"].min(),
+                "lon_max": df["lon"].max()
             },
             "parameter_stats": df.groupby("parameter")["value"].agg(["count", "mean", "min", "max"]).to_dict()
         }
