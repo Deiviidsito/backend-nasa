@@ -28,6 +28,24 @@ except ImportError as e:
     print(f"⚠️ Multi-city routes not available: {e}")
     MULTI_CITY_AVAILABLE = False
 
+# Import optimized multi-city routes
+try:
+    from api.routes.multi_city_optimized import router as multi_city_optimized_router
+    MULTI_CITY_OPTIMIZED_AVAILABLE = True
+    print("✅ Multi-city optimized routes loaded successfully")
+except ImportError as e:
+    print(f"⚠️ Multi-city optimized routes not available: {e}")
+    MULTI_CITY_OPTIMIZED_AVAILABLE = False
+
+# Import dashboard specialized routes
+try:
+    from api.routes.dashboard_specialized import router as dashboard_router
+    DASHBOARD_AVAILABLE = True
+    print("✅ Dashboard specialized routes loaded successfully")
+except ImportError as e:
+    print(f"⚠️ Dashboard specialized routes not available: {e}")
+    DASHBOARD_AVAILABLE = False
+
 app = FastAPI(
     title="CleanSky North America API",
     version="3.5.0",
@@ -49,25 +67,70 @@ app.add_middleware(
 if MULTI_CITY_AVAILABLE:
     app.include_router(multi_city_router, prefix="/api")
 
+# Include optimized multi-city routes if available
+if MULTI_CITY_OPTIMIZED_AVAILABLE:
+    app.include_router(multi_city_optimized_router)
+
+# Include dashboard specialized routes if available
+if DASHBOARD_AVAILABLE:
+    app.include_router(dashboard_router)
+
 @app.get("/")
 def root():
     """Endpoint raíz con información del sistema."""
+    endpoints = {
+        "health": "/health",
+        "docs": "/docs",
+        "latest": "/api/latest",
+        "forecast": "/api/forecast",
+        "alerts": "/api/alerts",
+        "tiles": "/api/tiles/{z}/{x}/{y}.png",
+    }
+    
+    # Agregar endpoints multi-ciudad si están disponibles
+    if MULTI_CITY_AVAILABLE:
+        endpoints.update({
+            "cities": "/api/cities",
+            "city_latest": "/api/cities/{city_id}/latest",
+            "compare_cities": "/api/cities/compare"
+        })
+    
+    # Agregar endpoints optimizados si están disponibles
+    if MULTI_CITY_OPTIMIZED_AVAILABLE:
+        endpoints.update({
+            "cities_v2": "/api/v2/cities",
+            "city_data_v2": "/api/v2/cities/{city_id}/data",
+            "city_stats_v2": "/api/v2/cities/{city_id}/stats",
+            "compare_cities_v2": "/api/v2/cities/compare"
+        })
+    
+    # Agregar endpoints del dashboard si están disponibles
+    if DASHBOARD_AVAILABLE:
+        endpoints.update({
+            "dashboard_all": "/api/dashboard/all-data",
+            "dashboard_city": "/api/dashboard/city/{city_id}",
+            "dashboard_metrics": "/api/dashboard/metrics",
+            "dashboard_refresh": "/api/dashboard/refresh"
+        })
+    
     return {
         "name": "CleanSky North America API",
         "version": "3.5.0",
         "description": "Monitoreo de calidad del aire en Norte América con datos NASA TEMPO",
         "environment": os.getenv("RENDER_SERVICE_NAME", "development"),
         "multi_city_available": MULTI_CITY_AVAILABLE,
+        "multi_city_optimized_available": MULTI_CITY_OPTIMIZED_AVAILABLE,
+        "dashboard_available": DASHBOARD_AVAILABLE,
         "port": os.getenv("PORT", "8000"),
         "python_version": sys.version,
-        "endpoints": {
-            "health": "/health",
-            "docs": "/docs",
-            "latest": "/api/latest",
-            "forecast": "/api/forecast",
-            "alerts": "/api/alerts",
-            "tiles": "/api/tiles/{z}/{x}/{y}.png",
-        },
+        "endpoints": endpoints,
+        "features": {
+            "multi_city_support": MULTI_CITY_AVAILABLE,
+            "optimized_queries": MULTI_CITY_OPTIMIZED_AVAILABLE,
+            "dashboard_specialized": DASHBOARD_AVAILABLE,
+            "cities_supported": 10,
+            "max_points_per_city": "3000+"
+        }
     }
 
 @app.get("/health")
