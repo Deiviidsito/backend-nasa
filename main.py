@@ -2,17 +2,25 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from typing import Dict, Any, List
 import datetime as dt
+import os
 from config import settings
 
+# Import multi-city routes
+try:
+    from api.routes.multi_city import router as multi_city_router
+    MULTI_CITY_AVAILABLE = True
+except ImportError:
+    MULTI_CITY_AVAILABLE = False
+
 app = FastAPI(
-    title="CleanSky LA API",
-    version="0.1.0",
-    description="API para monitoreo y predicción de calidad del aire en Los Ángeles usando datos satelitales NASA",
+    title="CleanSky North America API",
+    version="3.5.0",
+    description="API para monitoreo de calidad del aire en Norte América usando datos satelitales NASA TEMPO",
     docs_url="/docs",
     redoc_url="/redoc",
 )
 
-# CORS (permitir frontend local y vercel)
+# CORS (permitir frontend local, vercel y railway)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS if not settings.DEBUG else ["*"],
@@ -21,13 +29,19 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Include multi-city routes if available
+if MULTI_CITY_AVAILABLE:
+    app.include_router(multi_city_router, prefix="/api")
+
 @app.get("/")
 def root():
     """Endpoint raíz con información del sistema."""
     return {
-        "name": "CleanSky LA API",
-        "version": "0.1.0",
-        "description": "Monitoreo de calidad del aire en Los Ángeles",
+        "name": "CleanSky North America API",
+        "version": "3.5.0",
+        "description": "Monitoreo de calidad del aire en Norte América con datos NASA TEMPO",
+        "environment": os.getenv("RAILWAY_ENVIRONMENT", "development"),
+        "multi_city_available": MULTI_CITY_AVAILABLE,
         "endpoints": {
             "health": "/health",
             "docs": "/docs",
