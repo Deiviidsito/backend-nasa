@@ -2,21 +2,67 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from typing import Dict, Any, List
 import datetime as dt
+from config import settings
 
-app = FastAPI(title="CleanSky LA API", version="0.1.0")
+app = FastAPI(
+    title="CleanSky LA API",
+    version="0.1.0",
+    description="API para monitoreo y predicción de calidad del aire en Los Ángeles usando datos satelitales NASA",
+    docs_url="/docs",
+    redoc_url="/redoc",
+)
 
 # CORS (permitir frontend local y vercel)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.CORS_ORIGINS if not settings.DEBUG else ["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+@app.get("/")
+def root():
+    """Endpoint raíz con información del sistema."""
+    return {
+        "name": "CleanSky LA API",
+        "version": "0.1.0",
+        "description": "Monitoreo de calidad del aire en Los Ángeles",
+        "endpoints": {
+            "health": "/health",
+            "docs": "/docs",
+            "latest": "/api/latest",
+            "forecast": "/api/forecast",
+            "alerts": "/api/alerts",
+            "tiles": "/api/tiles/{z}/{x}/{y}.png",
+        },
+    }
+
 @app.get("/health")
 def health():
-    return {"status": "ok", "time": dt.datetime.utcnow().isoformat() + "Z"}
+    """Health check endpoint con información del sistema."""
+    earthdata_configured = settings.validate_earthdata_credentials()
+    
+    return {
+        "status": "ok",
+        "timestamp": dt.datetime.utcnow().isoformat() + "Z",
+        "environment": {
+            "debug_mode": settings.DEBUG,
+            "earthdata_configured": earthdata_configured,
+            "cors_origins": settings.CORS_ORIGINS if settings.DEBUG else ["configured"],
+        },
+        "configuration": {
+            "bbox": settings.get_bbox_dict(),
+            "grid_resolution": settings.GRID_RESOLUTION,
+            "update_interval_minutes": settings.UPDATE_INTERVAL,
+        },
+        "data_sources": {
+            "tempo": "NASA TEMPO (NO2, O3)",
+            "openaq": "OpenAQ (PM2.5, NO2, O3)",
+            "imerg": "NASA IMERG (Precipitation)",
+            "merra2": "NASA MERRA-2 (Meteorology)",
+        },
+    }
 
 # ---- Stubs de endpoints ----
 @app.get("/api/latest")
