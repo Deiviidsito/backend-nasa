@@ -3,13 +3,29 @@ from fastapi.middleware.cors import CORSMiddleware
 from typing import Dict, Any, List
 import datetime as dt
 import os
-from config import settings
+import sys
+import traceback
 
-# Import multi-city routes
+# Import config with error handling
+try:
+    from config import settings
+    print("✅ Config loaded successfully")
+except ImportError as e:
+    print(f"❌ Config import error: {e}")
+    # Fallback settings for Render
+    class FallbackSettings:
+        DEBUG = False
+        CORS_ORIGINS = ["*"]
+        API_PORT = int(os.getenv("PORT", "8000"))
+    settings = FallbackSettings()
+
+# Import multi-city routes with error handling
 try:
     from api.routes.multi_city import router as multi_city_router
     MULTI_CITY_AVAILABLE = True
-except ImportError:
+    print("✅ Multi-city routes loaded successfully")
+except ImportError as e:
+    print(f"⚠️ Multi-city routes not available: {e}")
     MULTI_CITY_AVAILABLE = False
 
 app = FastAPI(
@@ -40,8 +56,10 @@ def root():
         "name": "CleanSky North America API",
         "version": "3.5.0",
         "description": "Monitoreo de calidad del aire en Norte América con datos NASA TEMPO",
-        "environment": os.getenv("RAILWAY_ENVIRONMENT", "development"),
+        "environment": os.getenv("RENDER_SERVICE_NAME", "development"),
         "multi_city_available": MULTI_CITY_AVAILABLE,
+        "port": os.getenv("PORT", "8000"),
+        "python_version": sys.version,
         "endpoints": {
             "health": "/health",
             "docs": "/docs",
@@ -55,11 +73,15 @@ def root():
 @app.get("/health")
 def health():
     """Health check endpoint con información del sistema."""
-    earthdata_configured = settings.validate_earthdata_credentials()
+    try:
+        earthdata_configured = hasattr(settings, 'validate_earthdata_credentials') and settings.validate_earthdata_credentials()
+    except:
+        earthdata_configured = False
     
     return {
         "status": "ok",
         "timestamp": dt.datetime.utcnow().isoformat() + "Z",
+        "render_deployment": True,
         "environment": {
             "debug_mode": settings.DEBUG,
             "earthdata_configured": earthdata_configured,
